@@ -1,0 +1,52 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%; height: 100%;
+  background: #14171f;
+  overflow: hidden;
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  -webkit-user-select: none; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#stage {
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background:
+    radial-gradient(ellipse at 50% 40%, #232a3e 0%, #14171f 70%);
+}
+
+#game {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: #1a1e2e;
+  box-shadow: 0 0 0 4px #2a3350, 0 0 0 8px #14171f, 0 12px 48px rgba(0,0,0,.55);
+  cursor: pointer;
+  touch-action: none;
+}
+
+#touch-ui {
+  position: fixed; top: 12px; right: 12px;
+  display: flex; gap: 8px; z-index: 10;
+}
+
+.tbtn {
+  width: 40px; height: 40px;
+  border: 3px solid #5a6a9a;
+  background: #2a3350;
+  color: #e8ecf4;
+  font-size: 15px; line-height: 1;
+  border-radius: 6px;
+  cursor: pointer;
+  image-rendering: pixelated;
+  box-shadow: 0 3px 0 #14171f;
+}
+.tbtn:active { transform: translateY(2px); box-shadow: 0 1px 0 #14171f; }
+.tbtn.off { color: #8a93a6; border-color: #3a4054; }
+
+#loading {
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #ffd66e; font-size: 15px; letter-spacing: 2px;
+  background: #14171f; z-index: 20;
+}

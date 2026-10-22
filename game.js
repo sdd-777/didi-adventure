@@ -261,7 +261,6 @@ addEventListener('keydown', e => {
       break;
     case 'KeyM':
       Music.on = !Music.on; G.musicOn = Music.on;
-      $('btn-mute').classList.toggle('off', !Music.on);
       break;
   }
 });
@@ -310,17 +309,7 @@ canvas.addEventListener('pointerdown', e => {
   }
 });
 
-/* 顶部按钮 */
-$('btn-pause').addEventListener('click', () => {
-  AudioSys.ensure(); Music.start();
-  if (G.state === 'play') openPause();
-  else if (G.state === 'pause') closePause();
-});
-$('btn-mute').addEventListener('click', () => {
-  AudioSys.ensure(); Music.start();
-  Music.on = !Music.on; G.musicOn = Music.on;
-  $('btn-mute').classList.toggle('off', !Music.on);
-});
+/* 暂停 / 静音：统一用画布内按钮 + 键盘（避免覆盖右上角里程 HUD） */
 
 /* ---------------- 流程 ---------------- */
 function startRun() {
@@ -649,7 +638,7 @@ function activatePauseRow() {
   if (G.pauseIdx === 0) closePause();
   else if (G.pauseIdx === 1) startRun();
   else if (G.pauseIdx === 2) { G.state = 'title'; }
-  else if (G.pauseIdx === 3) { Music.on = !Music.on; G.musicOn = Music.on; $('btn-mute').classList.toggle('off', !Music.on); }
+  else if (G.pauseIdx === 3) { Music.on = !Music.on; G.musicOn = Music.on; }
   else if (G.pauseIdx === 4) { G.sfxOn = !G.sfxOn; AudioSys.sfx('click'); }
 }
 
@@ -665,14 +654,14 @@ function drawNum(n, x, y, minDig) {
   if (minDig && s.length < minDig) str = s.padStart(minDig, '0');
   for (let i = 0; i < str.length; i++) {
     const g = '0123456789'.indexOf(str[i]);
-    ctx.drawImage(IMG['digits.png'], g * 7, 0, 7, 10, Math.round(x + i * 7), Math.round(y), 7, 10);
+    ctx.drawImage(IMG['digits.png'], g * 6, 0, 6, 11, Math.round(x + i * 6), Math.round(y), 6, 11);
   }
-  return str.length * 7;
+  return str.length * 6;
 }
 function drawGlyph(ch, x, y) {
   const g = '0123456789/M+.'.indexOf(ch);
   if (g < 0) return 0;
-  ctx.drawImage(IMG['digits.png'], g * 7, 0, 7, 10, Math.round(x), Math.round(y), 7, 10);
+  ctx.drawImage(IMG['digits.png'], g * 6, 0, 6, 11, Math.round(x), Math.round(y), 6, 11);
   return 7;
 }
 
@@ -816,7 +805,7 @@ function drawHUD() {
   if (player.x2 > 0) blit('t_x2badge.png', cx + 5, 17);
 
   // 里程
-  const distW = IMG['t_hud_dist.png'].width + String(world.dist).length * 7 + 7;
+  const distW = IMG['t_hud_dist.png'].width + String(world.dist).length * 6 + 7;
   let dx = W - 6 - distW;
   blit('t_hud_dist.png', dx, 6); dx += IMG['t_hud_dist.png'].width;
   dx += drawNum(world.dist, dx, 5);
@@ -864,7 +853,7 @@ function renderTitle() {
     blitCell(IMG['chars.png'], f * CHAR_W, row * CHAR_H, xs[i], 146 - CHAR_H);
   }
   // 最佳纪录
-  const bw = IMG['t_best.png'].width + String(G.best.dist).length * 7 + 7;
+  const bw = IMG['t_best.png'].width + String(G.best.dist).length * 6 + 7;
   let bx = W - 6 - bw;
   blit('t_best.png', bx, 6); bx += IMG['t_best.png'].width;
   bx += drawNum(G.best.dist, bx, 5);
@@ -960,7 +949,7 @@ function renderOver() {
   blit('screen_over.png', 0, 0);
   // 成绩行
   const coins = world.coins || 0;
-  const lineW = IMG['t_stat_coins.png'].width + 4 + String(coins).length * 7 + 10 + IMG['t_stat_dist.png'].width + 4 + String(world.dist).length * 7 + 7;
+  const lineW = IMG['t_stat_coins.png'].width + 4 + String(coins).length * 6 + 10 + IMG['t_stat_dist.png'].width + 4 + String(world.dist).length * 6 + 7;
   let sx = (W - lineW) / 2;
   blit('t_stat_coins.png', sx, 78); sx += IMG['t_stat_coins.png'].width + 4;
   sx += drawNum(coins, sx, 77);

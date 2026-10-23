@@ -37,11 +37,15 @@ const FILES = [
   'cloud1.png', 'cloud2.png', 'cloud3.png', 'bush.png', 'tree.png', 'flower.png', 'fence.png',
   'sky_sunrise.png', 'sky_sunset.png', 'sky_fire.png', 'sky_evening.png', 'sky_day.png', 'sky_night.png',
   'screen_title.png', 'screen_select.png', 'screen_pause.png', 'screen_win.png', 'screen_over.png',
+  'screen_win_touch.png', 'screen_over_touch.png',
   't_name_girl.png', 't_desc_girl.png', 't_name_boy.png', 't_desc_boy.png', 't_name_dino.png', 't_desc_dino.png',
-  't_hud_dist.png', 't_best.png', 't_prompt.png', 't_prompt2.png',
-  't_toast_shield.png', 't_toast_x2.png', 't_toast_rocket.png', 't_toast_rocket_off.png', 't_toast_shield_off.png', 't_flight_hint.png',
+  't_hud_dist.png', 't_best.png', 't_prompt.png', 't_prompt2.png', 't_prompt_touch.png', 't_prompt2_touch.png',
+  't_sel_hint.png', 't_sel_hint_touch.png', 't_sel_hint2.png', 't_sel_hint2_touch.png',
+  't_pause_resume.png', 't_pause_resume_t.png', 't_pause_restart.png', 't_pause_restart_t.png', 't_pause_menu.png',
+  't_toast_shield.png', 't_toast_x2.png', 't_toast_rocket.png', 't_toast_rocket_off.png', 't_toast_shield_off.png', 't_flight_hint.png', 't_flight_hint_touch.png',
   't_stat_coins.png', 't_stat_dist.png', 't_sep.png', 't_record.png', 't_x2badge.png',
   't_row_music.png', 't_row_sfx.png', 't_on.png', 't_off.png',
+  't_landscape.png', 't_landscape2.png',
   't_sky_sunrise.png', 't_sky_sunset.png', 't_sky_fire.png', 't_sky_evening.png', 't_sky_day.png', 't_sky_night.png',
   'digits.png',
 ];
@@ -63,17 +67,46 @@ const irand = (a, b) => Math.floor(rand(a, b + 1));
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const $ = id => document.getElementById(id);
 
-/* ---------------- 画布 ---------------- */
+/* ---------------- 画布 ------------- */
 const canvas = $('game');
 const ctx = canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
+
+/* 平台探测：触屏设备走移动端（?touch=1 / ?desktop=1 可强制覆盖） */
+const QS = new URLSearchParams(location.search);
+const IS_TOUCH = QS.get('touch') === '1' ? true
+  : QS.get('desktop') === '1' ? false
+  : (matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window || navigator.maxTouchPoints > 0);
+
 function resize() {
-  const s = Math.min(innerWidth / W, innerHeight / H);
-  const scale = s >= 1 ? Math.floor(s) : s;
+  const vw = innerWidth, vh = innerHeight;
+  let s = Math.min(vw / W, vh / H);
+  // 桌面小窗也保证至少 2 倍（字更大更好认）；实在放不下 2 倍时才退回适配
+  if (s < 2 && vw >= W * 2 && vh >= H * 2) s = 2;
+  const scale = s >= 1 ? Math.floor(s * 2) / 2 : s;  // 允许 0.5 步进，缩放更顺滑
   canvas.style.width = Math.round(W * scale) + 'px';
   canvas.style.height = Math.round(H * scale) + 'px';
 }
 addEventListener('resize', resize);
+addEventListener('orientationchange', () => setTimeout(resize, 120));
+
+/* 横屏引导（移动端） */
+function checkOrientation() {
+  G.portrait = G.touch && innerHeight > innerWidth + 40;
+}
+addEventListener('resize', checkOrientation);
+addEventListener('orientationchange', () => setTimeout(checkOrientation, 120));
+
+/* 首次游戏时尝试全屏 + 锁定横屏（浏览器允许才生效） */
+function tryLandscapeLock() {
+  if (!G.touch || G.locked) return;
+  G.locked = true;
+  try {
+    const el = document.documentElement;
+    if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {});
+    if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {});
+  } catch (err) { /* 忽略：不支持就退回横屏提示 */ }
+}
 
 /* ---------------- 音频 ---------------- */
 const AudioSys = {
@@ -174,6 +207,9 @@ const G = {
   best: { dist: 0, coins: 0 },
   musicOn: true, sfxOn: true,
   skyIdx: 0,
+  touch: IS_TOUCH,          // 平台模式
+  portrait: false,          // 移动端竖屏中
+  locked: false,            // 已尝试横屏锁定
 };
 try {
   G.best = JSON.parse(localStorage.getItem('didi_best_v1')) || G.best;
@@ -194,6 +230,7 @@ const player = {
   hearts: 2, invuln: 0,
   shield: 0, x2: 0, rocket: 0,
   runT: 0, hurtT: 0,
+  dragging: false, dragTX: 0, dragTY: 0,   // 触屏飞行拖动
 };
 const world = {
   scrollX: 0, speed: 2.2, dist: 0, coins: 0,
@@ -272,13 +309,19 @@ addEventListener('keyup', e => {
   }
 });
 
-/* 指针 */
-canvas.addEventListener('pointerdown', e => {
-  e.preventDefault();
-  AudioSys.ensure(); Music.start();
+/* 指针（触屏：点按/上滑/拖动；鼠标：点击即响应） */
+const TP = { on: false, id: -1, x0: 0, y0: 0, x: 0, y: 0, moved: false, swiped: false };
+
+function toCanvas(e) {
   const r = canvas.getBoundingClientRect();
-  const px = (e.clientX - r.left) / r.width * W;
-  const py = (e.clientY - r.top) / r.height * H;
+  return {
+    px: (e.clientX - r.left) / r.width * W,
+    py: (e.clientY - r.top) / r.height * H,
+  };
+}
+
+/* 菜单类点击（标题/选角/暂停/胜利/结束），鼠标与触屏共用 */
+function menuTap(px, py) {
   if (G.state === 'title') { G.state = 'select'; G.selIdx = G.charIdx; AudioSys.sfx('click'); }
   else if (G.state === 'select') {
     const cards = [22, 118, 214];
@@ -286,11 +329,6 @@ canvas.addEventListener('pointerdown', e => {
       if (px >= cards[i] && px <= cards[i] + 84 && py >= 36 && py <= 136) { G.selIdx = i; AudioSys.sfx('click'); return; }
     if (py > 150) { G.state = 'title'; AudioSys.sfx('click'); return; }
     startRun();
-  }
-  else if (G.state === 'play') {
-    // 画布内暂停按钮（右上角，HUD 区）
-    if (px >= W - 30 && px <= W - 6 && py >= 16 && py <= 34) { openPause(); return; }
-    jumpPressed = true; jumpHeld = true;
   }
   else if (G.state === 'pause') {
     if (px >= W - 30 && px <= W - 6 && py >= 16 && py <= 34) { closePause(); return; }
@@ -307,7 +345,45 @@ canvas.addEventListener('pointerdown', e => {
     if (py >= 96 && py <= 116) startRun();
     else if (py >= 122 && py <= 142) { G.state = 'select'; G.selIdx = G.charIdx; AudioSys.sfx('click'); }
   }
+}
+
+canvas.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  AudioSys.ensure(); Music.start();
+  const { px, py } = toCanvas(e);
+  TP.on = true; TP.id = e.pointerId;
+  TP.x0 = px; TP.y0 = py; TP.x = px; TP.y = py;
+  TP.moved = false; TP.swiped = false;
+  if (G.state !== 'play') menuTap(px, py);
 });
+
+canvas.addEventListener('pointermove', e => {
+  if (!TP.on || e.pointerId !== TP.id) return;
+  const { px, py } = toCanvas(e);
+  TP.x = px; TP.y = py;
+  if (Math.abs(px - TP.x0) > 8 || Math.abs(py - TP.y0) > 8) TP.moved = true;
+  if (G.state === 'play') {
+    // 上滑跳跃（每次触摸只触发一次）
+    if (!TP.swiped && py - TP.y0 < -28) { TP.swiped = true; doJump(); }
+    // 飞行中：按住拖动 = 移动吃金币
+    if (player.rocket > 0) { player.dragging = true; player.dragTX = px; player.dragTY = py; }
+  }
+});
+
+function endPointer(e) {
+  if (!TP.on || (e.pointerId !== undefined && e.pointerId !== TP.id)) return;
+  if (G.state === 'play' && TP.on) {
+    const { px, py } = toCanvas(e);
+    // 画布内暂停按钮（右上角）
+    if (px >= W - 30 && px <= W - 6 && py >= 16 && py <= 34) { openPause(); TP.on = false; return; }
+    if (!TP.moved && !TP.swiped) doJump();   // 点按 = 跳跃
+  }
+  TP.on = false;
+  player.dragging = false;
+}
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('pointerleave', endPointer);
 
 /* 暂停 / 静音：统一用画布内按钮 + 键盘（避免覆盖右上角里程 HUD） */
 
@@ -318,11 +394,14 @@ function startRun() {
   player.onGround = true; player.jumpsUsed = 0; player.coyote = 0;
   player.hearts = 2; player.invuln = 0;
   player.shield = 0; player.x2 = 0; player.rocket = 0;
+  player.dragging = false;
   world.scrollX = 0; world.speed = 2.2; world.dist = 0; world.coins = 0;
   world.ents = []; world.nextX = 420; world.lastHazardX = 0; world.lastItemX = 0;
   world.won = false;
   particles = []; toasts = [];
   G.state = 'play';
+  checkOrientation();
+  tryLandscapeLock();
   saveBest();
   AudioSys.sfx('click');
 }
@@ -466,6 +545,7 @@ function update() {
 
   /* ---- 游戏中 ---- */
   if (G.hitStop > 0) { G.hitStop--; return; }
+  if (G.portrait && G.touch) return;   // 移动端竖屏：冻结玩法，等横屏
 
   // 速度与距离
   world.speed = Math.min(3.9, 2.2 + world.dist / 2400);
@@ -482,6 +562,13 @@ function update() {
     if (e.type === 'firebar') e.ang += e.spd;
     else if (e.type === 'hammer') e.ang += e.spd;
     else if (e.type === 'popup') { e.ph = (e.ph + 1) % e.period; }
+    // 飞行中：天空金币磁吸（手指拖动也能轻松吃到）
+    else if (e.type === 'coin' && player.rocket > 0) {
+      const cx = e.x - world.scrollX + 5, cy = e.y + 5;
+      const dx = player.x + 8 - cx, dy = player.y + 9 - cy;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < 46 * 46) { e.x += dx * 0.14; e.y += dy * 0.14; }
+    }
   }
 
   /* ---- 玩家 ---- */
@@ -491,12 +578,16 @@ function update() {
       // 起飞：快速滑入天空
       player.y += (48 - player.y) * 0.28;
     } else {
-      // 自由飞行：方向键移动吃金币
+      // 自由飞行：方向键 / 触屏拖动
       const fly = 1.9;
       if (keys['ArrowUp'] || keys['KeyW']) player.y -= fly;
       if (keys['ArrowDown'] || keys['KeyS']) player.y += fly;
       if (keys['ArrowLeft'] || keys['KeyA']) player.x -= fly * 0.9;
       if (keys['ArrowRight'] || keys['KeyD']) player.x += fly * 0.9;
+      if (player.dragging) {
+        player.x += (player.dragTX - 8 - player.x) * 0.28;
+        player.y += (player.dragTY - 9 - player.y) * 0.28;
+      }
       player.y = clamp(player.y, 12, 120);
       player.x = clamp(player.x, 18, 156);
     }
@@ -607,7 +698,7 @@ function collectItem(e, i) {
     G.skyIdx = irand(0, SKIES.length - 1);
     toast('t_toast_rocket');
     setTimeout(() => toast(SKIES[G.skyIdx].label), 900);
-    setTimeout(() => toast('t_flight_hint'), 2100);
+    setTimeout(() => toast(G.touch ? 't_flight_hint_touch' : 't_flight_hint'), 2100);
   }
   for (let k = 0; k < 8; k++)
     particles.push({ x: e.x - world.scrollX + 7, y: e.y + 7, vx: rand(-1.6, 1.6), vy: rand(-1.8, -0.4), life: 24, type: 'spark', col: '#FFFFFF' });
@@ -858,10 +949,12 @@ function renderTitle() {
   blit('t_best.png', bx, 6); bx += IMG['t_best.png'].width;
   bx += drawNum(G.best.dist, bx, 5);
   drawGlyph('M', bx, 5);
-  // 闪烁提示
+  // 闪烁提示（桌面：空格键；移动端：触控）
   if (Math.floor(G.t / 30) % 2 === 0) {
-    blit('t_prompt.png', (W - IMG['t_prompt.png'].width) / 2, 158);
-    blit('t_prompt2.png', (W - IMG['t_prompt2.png'].width) / 2, 174);
+    const p1 = G.touch ? 't_prompt_touch.png' : 't_prompt.png';
+    const p2 = G.touch ? 't_prompt2_touch.png' : 't_prompt2.png';
+    blit(p1, (W - IMG[p1].width) / 2, 158);
+    blit(p2, (W - IMG[p2].width) / 2, 174);
   }
 }
 
@@ -891,6 +984,11 @@ function renderSelect() {
     blit(CHARS_META[i].name, cx0 + 42 - IMG[CHARS_META[i].name].width / 2, 84);
     blit(CHARS_META[i].desc, cx0 + 42 - IMG[CHARS_META[i].desc].width / 2, 100);
   }
+  // 底部提示（桌面/移动端两套）
+  const h1 = G.touch ? 't_sel_hint_touch.png' : 't_sel_hint.png';
+  const h2 = G.touch ? 't_sel_hint2_touch.png' : 't_sel_hint2.png';
+  blit(h1, (W - IMG[h1].width) / 2, 146);
+  blit(h2, (W - IMG[h2].width) / 2, 160);
 }
 
 function drawWorldLayers() {
@@ -921,6 +1019,14 @@ function renderPlay() {
 function renderPause() {
   renderPlayWorldOnly();
   blit('screen_pause.png', 0, 0);
+  // 菜单行（桌面带按键提示，移动端纯文字）
+  const sfx = G.touch ? '_t.png' : '.png';
+  const rows = [
+    't_pause_resume' + sfx,
+    't_pause_restart' + sfx,
+    't_pause_menu.png',
+  ];
+  for (let i = 0; i < 3; i++) blit(rows[i], 100, 70 + i * 15);
   // 光标
   const y = 70 + G.pauseIdx * 15;
   ctx.fillStyle = '#FFD66E';
@@ -941,12 +1047,12 @@ function renderPlayWorldOnly() {
 
 function renderWin() {
   renderPlayWorldOnly();
-  blit('screen_win.png', 0, 0);
+  blit(G.touch ? 'screen_win_touch.png' : 'screen_win.png', 0, 0);
 }
 
 function renderOver() {
   renderPlayWorldOnly();
-  blit('screen_over.png', 0, 0);
+  blit(G.touch ? 'screen_over_touch.png' : 'screen_over.png', 0, 0);
   // 成绩行
   const coins = world.coins || 0;
   const lineW = IMG['t_stat_coins.png'].width + 4 + String(coins).length * 6 + 10 + IMG['t_stat_dist.png'].width + 4 + String(world.dist).length * 6 + 7;
@@ -960,6 +1066,28 @@ function renderOver() {
   if (newRecord()) blit('t_record.png', (W - IMG['t_record.png'].width) / 2, 94);
 }
 
+/* 移动端竖屏遮罩 */
+function renderLandscapeOverlay() {
+  ctx.fillStyle = 'rgba(12, 14, 22, 0.88)';
+  ctx.fillRect(0, 0, W, H);
+  // 旋转的手机图标（像素风）
+  const cx = 160, cy = 62;
+  const wob = Math.sin(G.t * 0.06) * 0.35;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(wob);
+  ctx.fillStyle = '#2A3350';
+  ctx.fillRect(-13, -22, 26, 44);
+  ctx.strokeStyle = '#FFD66E'; ctx.lineWidth = 2;
+  ctx.strokeRect(-12, -21, 24, 42);
+  ctx.fillStyle = '#FFD66E';
+  ctx.fillRect(-4, -16, 8, 26);
+  ctx.restore();
+  const t1 = IMG['t_landscape.png'], t2 = IMG['t_landscape2.png'];
+  blit('t_landscape.png', (W - t1.width) / 2, 104);
+  blit('t_landscape2.png', (W - t2.width) / 2, 124);
+}
+
 function render() {
   ctx.clearRect(0, 0, W, H);
   switch (G.state) {
@@ -970,6 +1098,7 @@ function render() {
     case 'win': renderWin(); break;
     case 'over': renderOver(); break;
   }
+  if (G.touch && G.portrait && G.state !== 'title') renderLandscapeOverlay();
 }
 
 /* ---------------- 主循环 ---------------- */
@@ -991,6 +1120,8 @@ function loop(t) {
 resize();
 loadAll(() => {
   $('loading').style.display = 'none';
+  checkOrientation();
+  resize();
   requestAnimationFrame(loop);
 });
 

@@ -45,7 +45,7 @@ const FILES = [
   't_toast_shield.png', 't_toast_x2.png', 't_toast_rocket.png', 't_toast_rocket_off.png', 't_toast_shield_off.png', 't_flight_hint.png', 't_flight_hint_touch.png',
   't_stat_coins.png', 't_stat_dist.png', 't_sep.png', 't_record.png', 't_x2badge.png',
   't_row_music.png', 't_row_sfx.png', 't_on.png', 't_off.png',
-  't_landscape.png', 't_landscape2.png',
+  't_portrait_hint.png',
   't_sky_sunrise.png', 't_sky_sunset.png', 't_sky_fire.png', 't_sky_evening.png', 't_sky_day.png', 't_sky_night.png',
   'digits.png',
 ];
@@ -97,16 +97,7 @@ function checkOrientation() {
 addEventListener('resize', checkOrientation);
 addEventListener('orientationchange', () => setTimeout(checkOrientation, 120));
 
-/* 首次游戏时尝试全屏 + 锁定横屏（浏览器允许才生效） */
-function tryLandscapeLock() {
-  if (!G.touch || G.locked) return;
-  G.locked = true;
-  try {
-    const el = document.documentElement;
-    if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {});
-    if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {});
-  } catch (err) { /* 忽略：不支持就退回横屏提示 */ }
-}
+/* 竖屏/横屏都可玩：不再强制旋转，只在竖屏时给一条温和提示 */
 
 /* ---------------- 音频 ---------------- */
 const AudioSys = {
@@ -209,6 +200,7 @@ const G = {
   skyIdx: 0,
   touch: IS_TOUCH,          // 平台模式
   portrait: false,          // 移动端竖屏中
+  runT: 0,                  // 本局计时（竖屏提示淡出用）
   locked: false,            // 已尝试横屏锁定
 };
 try {
@@ -398,10 +390,11 @@ function startRun() {
   world.scrollX = 0; world.speed = 2.2; world.dist = 0; world.coins = 0;
   world.ents = []; world.nextX = 420; world.lastHazardX = 0; world.lastItemX = 0;
   world.won = false;
+  G.runT = 0;
   particles = []; toasts = [];
   G.state = 'play';
   checkOrientation();
-  tryLandscapeLock();
+  G.runT = 0;
   saveBest();
   AudioSys.sfx('click');
 }
@@ -545,7 +538,8 @@ function update() {
 
   /* ---- 游戏中 ---- */
   if (G.hitStop > 0) { G.hitStop--; return; }
-  if (G.portrait && G.touch) return;   // 移动端竖屏：冻结玩法，等横屏
+
+  G.runT++;
 
   // 速度与距离
   world.speed = Math.min(3.9, 2.2 + world.dist / 2400);
@@ -1066,26 +1060,19 @@ function renderOver() {
   if (newRecord()) blit('t_record.png', (W - IMG['t_record.png'].width) / 2, 94);
 }
 
-/* 移动端竖屏遮罩 */
-function renderLandscapeOverlay() {
-  ctx.fillStyle = 'rgba(12, 14, 22, 0.88)';
-  ctx.fillRect(0, 0, W, H);
-  // 旋转的手机图标（像素风）
-  const cx = 160, cy = 62;
-  const wob = Math.sin(G.t * 0.06) * 0.35;
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(wob);
-  ctx.fillStyle = '#2A3350';
-  ctx.fillRect(-13, -22, 26, 44);
-  ctx.strokeStyle = '#FFD66E'; ctx.lineWidth = 2;
-  ctx.strokeRect(-12, -21, 24, 42);
-  ctx.fillStyle = '#FFD66E';
-  ctx.fillRect(-4, -16, 8, 26);
-  ctx.restore();
-  const t1 = IMG['t_landscape.png'], t2 = IMG['t_landscape2.png'];
-  blit('t_landscape.png', (W - t1.width) / 2, 104);
-  blit('t_landscape2.png', (W - t2.width) / 2, 124);
+/* 竖屏温和提示（不阻挡、不暂停，几秒后淡出） */
+function renderPortraitHint() {
+  if (!G.touch || !G.portrait || G.state !== 'play') return;
+  const age = G.runT;
+  if (age > 300) return;                       // 5 秒后自动消失
+  const alpha = age < 20 ? age / 20 : age > 260 ? (300 - age) / 40 : 1;
+  const im = IMG['t_portrait_hint.png'];
+  const x = (W - im.width) / 2, y = 44;
+  ctx.globalAlpha = clamp(alpha, 0, 1) * 0.9;
+  ctx.fillStyle = 'rgba(12, 14, 22, 0.72)';
+  ctx.fillRect(x - 6, y - 3, im.width + 12, im.height + 6);
+  blit('t_portrait_hint.png', x, y);
+  ctx.globalAlpha = 1;
 }
 
 function render() {
@@ -1098,7 +1085,7 @@ function render() {
     case 'win': renderWin(); break;
     case 'over': renderOver(); break;
   }
-  if (G.touch && G.portrait && G.state !== 'title') renderLandscapeOverlay();
+  renderPortraitHint();
 }
 
 /* ---------------- 主循环 ---------------- */
